@@ -39,3 +39,9 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# local planning/spec docs
+docs/
+
+# generated geocoding cache
+src/data/camino/geocoding-cache.json

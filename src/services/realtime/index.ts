@@ -1,0 +1,1 @@
+export { HttpWeatherProvider } from './HttpWeatherProvider';

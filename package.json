@@ -3,10 +3,20 @@
   "version": "1.0.0",
   "main": "index.ts",
   "dependencies": {
+    "@azure/ai-projects": "^2.2.0",
+    "@azure/identity": "^4.13.1",
+    "@expo/metro-runtime": "~56.0.15",
+    "dotenv": "^17.4.2",
     "expo": "~56.0.12",
+    "expo-battery": "~56.0.4",
+    "expo-location": "~56.0.18",
+    "expo-sqlite": "~56.0.5",
     "expo-status-bar": "~56.0.4",
     "react": "19.2.3",
-    "react-native": "0.85.3"
+    "react-dom": "19.2.3",
+    "react-native": "0.85.3",
+    "react-native-maps": "1.27.2",
+    "react-native-web": "^0.21.2"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
@@ -14,9 +24,13 @@
   },
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
     "web": "expo start --web",
+    "data:build-towns": "node scripts/build-camino-towns.mjs",
+    "data:geocode": "node scripts/geocode-camino-data.mjs",
+    "data:validate": "tsc --outDir /tmp/ultreia-data-validate --module commonjs --noEmit false && node -e \"const { validateCaminoDataPack } = require('/tmp/ultreia-data-validate/src/data/camino'); const issues = validateCaminoDataPack(); console.log(JSON.stringify({ issueCount: issues.length, firstIssues: issues.slice(0, 10) }, null, 2)); if (issues.length) process.exit(1);\"",
+    "foundry:gateway": "node scripts/foundry-gateway.mjs",
     "typecheck": "tsc --noEmit"
   },
   "private": true
