@@ -4,13 +4,14 @@ import { AIProjectClient } from '@azure/ai-projects';
 import { ClientSecretCredential } from '@azure/identity';
 import { config as loadEnv } from 'dotenv';
 
-loadEnv({ path: '.env.foundry.local' });
+const foundryEnvPath = process.env.ULTREIA_FOUNDRY_ENV_FILE ?? `${process.env.HOME}/.config/ultreia/foundry-gateway.env`;
+loadEnv({ path: foundryEnvPath });
 
 const port = Number(process.env.ULTREIA_GATEWAY_PORT ?? 7071);
 const projectEndpoint = process.env.PROJECT_ENDPOINT;
 
 for (const envName of ['PROJECT_ENDPOINT', 'AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET']) {
-  if (!process.env[envName]) throw new Error(`Falta ${envName} en .env.foundry.local`);
+  if (!process.env[envName]) throw new Error(`Falta ${envName} en ${foundryEnvPath}`);
 }
 
 const agentApplications = {
@@ -119,5 +120,5 @@ const server = createServer(async (request, response) => {
 
 server.listen(port, () => {
   console.log(`Ultreia Foundry gateway escuchando en http://localhost:${port}/api/ai/{planning|decision|chat}`);
-  console.log('Project endpoint configurado desde .env.foundry.local');
+  console.log('Project endpoint configurado desde el fichero local del gateway');
 });

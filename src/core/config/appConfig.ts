@@ -14,6 +14,6 @@ export const appConfig: AppConfig = {
   locale: 'es-ES',
   enableFoundryAgents: true,
   enableRealtimeWeather: true,
-  aiGatewayBaseUrl: 'http://localhost:7071/api/ai',
-  weatherGatewayBaseUrl: 'http://localhost:7071/api/realtime/weather',
+  aiGatewayBaseUrl: process.env.EXPO_PUBLIC_AI_GATEWAY_BASE_URL ?? 'http://localhost:7071/api/ai',
+  weatherGatewayBaseUrl: process.env.EXPO_PUBLIC_WEATHER_GATEWAY_BASE_URL ?? 'http://localhost:7071/api/realtime/weather',
 };
