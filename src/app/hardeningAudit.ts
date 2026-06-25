@@ -16,7 +16,7 @@ export const runHardeningAudit = (): HardeningAuditResult => {
     {
       id: 'no-runtime-consumer',
       ok: true,
-      message: 'La app usa data pack local y no depende de llamadas runtime a Consumer.',
+      message: 'La app usa data pack local.',
     },
     {
       id: 'foundry-gateway-only',
