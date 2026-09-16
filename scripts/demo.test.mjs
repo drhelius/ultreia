@@ -16,11 +16,30 @@ const { enrichDirectorContext, recommendationsForDay, localRecommendationDate } 
 const { isDirectorAgentOutput, isPlanningAgentOutput } = require('/tmp/ultreia-data-validate/src/services/ai/agentValidators');
 const { planCampaigns } = require('/tmp/ultreia-data-validate/src/features/planning/campaignPlanner');
 const { selectPlannerRecommendations, recommendationToCampaignPlan, formatCampaignRationale } = require('/tmp/ultreia-data-validate/src/features/planning/campaignPresenter');
+const { describeStageAdaptation } = require('/tmp/ultreia-data-validate/src/features/planning/campaignAdaptation');
 const { staticCaminoDataRepository } = require('/tmp/ultreia-data-validate/src/data/camino');
 const { findServicesNear } = require('/tmp/ultreia-data-validate/src/domain/camino/nearbyServices');
 const { buildAssistantContext } = require('/tmp/ultreia-data-validate/src/features/ai-chat/buildAssistantContext');
 const mapData = require('../src/data/camino/mapData.json');
+const { plannedStageSlug, parsePlannedStage, buildPlannedStage } = require('/tmp/ultreia-data-validate/src/data/camino/plannedStages');
+const { redistributeJourney } = require('/tmp/ultreia-data-validate/src/features/planning/journeyRedistribution');
 const campaign = { ...campaignTemplatesTable.items.find((item) => item.id === 'campaign:clasica-frances-sarria'), travelMode: 'walk' };
+
+test('personalized stages reconstruct their geometry and metadata from persisted identifiers', async () => {
+  const sources = cyclingStagesTable.items.filter((stage) => stage.routeSlug === 'camino-primitivo').slice(0, 2);
+  const definition = { day: 1, startTown: sources[0].startTown, endTown: sources[1].endTown, parts: sources.map((stage) => ({ stageSlug: stage.slug, fromKm: 0, toKm: mapRepository.getStageGeometry(stage.slug).distanceKm })) };
+  const slug = plannedStageSlug(definition);
+  assert.deepEqual(parsePlannedStage(slug), definition);
+  const rebuilt = buildPlannedStage(slug, source => cyclingStagesTable.items.find(stage => stage.slug === source), source => mapData.stages.find(stage => stage.stageSlug === source));
+  assert.ok(rebuilt);
+  assert.equal((await staticCaminoDataRepository.getStage(slug)).endTown, sources[1].endTown);
+  assert.equal(mapRepository.getStageAudit(slug).status, 'verified');
+  assert.ok(mapRepository.getCampaignAudit([slug]).ready);
+  const halfway = rebuilt.geometry.distanceKm / 2;
+  assert.ok(Math.abs(progressOnRoute(rebuilt.geometry.coordinates, positionOnRoute(rebuilt.geometry.coordinates, halfway)).distanceKm - halfway) < .01);
+  assert.equal(parsePlannedStage('planned-v1:bad-json'), undefined);
+  assert.equal(buildPlannedStage(plannedStageSlug({ ...definition, parts: [{ ...definition.parts[0], toKm: 9999 }] }), mapRepository.getStageDefinition, mapRepository.getStageGeometry), undefined);
+});
 
 test('map geometry, references and service identifiers are valid', () => {
   const stageSlugs = new Set(mapData.stages.map((stage) => stage.stageSlug));
@@ -33,6 +52,76 @@ test('map geometry, references and service identifiers are valid', () => {
   }
   assert.ok(mapData.services.every((service) => stageSlugs.has(service.stageSlug)));
   for (const category of ['fuente', 'farmacia', 'centro_salud', 'restaurante', 'supermercado']) assert.ok(mapData.services.some((service) => service.type === category));
+});
+
+test('Primitivo cycling is redistributed from six to seven real days with preserved geometry', async () => {
+  const source = cyclingStagesTable.items.filter((stage) => stage.routeSlug === 'camino-primitivo');
+  const draft = { displayName: 'Prueba', travelMode: 'bike', availableDays: 7, budgetMode: 'austero', goal: 'llegar_a_santiago', pilgrimClasses: ['fotografico'], avoidCrowds: false };
+  const result = redistributeJourney(source, draft);
+  assert.ok(result);
+  assert.equal(result.stages.length, 7);
+  assert.equal(result.stages[0].startTown, source[0].startTown);
+  assert.equal(result.stages.at(-1).endTown, source.at(-1).endTown);
+  assert.equal(result.adaptation.stageBoundariesChanged, true);
+  assert.ok(result.adaptation.changes.some((change) => change.kind === 'split'));
+  assert.ok(mapRepository.getCampaignAudit(result.stages.map((stage) => stage.slug)).ready);
+  const expectedKm = source.reduce((sum, stage) => sum + mapRepository.getStageGeometry(stage.slug).distanceKm, 0);
+  assert.ok(Math.abs(result.stages.reduce((sum, stage) => sum + mapRepository.getStageGeometry(stage.slug).distanceKm, 0) - expectedKm) < 1);
+  for (const stage of result.stages) {
+    const geometry = mapRepository.getStageGeometry(stage.slug);
+    for (const percent of [0, .25, .5, .75, 1]) {
+      const km = geometry.distanceKm * percent;
+      assert.ok(Math.abs(progressOnRoute(geometry.coordinates, positionOnRoute(geometry.coordinates, km)).distanceKm - km) < .01);
+    }
+  }
+  const relaxed = redistributeJourney(source, { ...draft, pilgrimClasses: ['tranquilo'] });
+  assert.ok(relaxed);
+  assert.ok(relaxed.stages.reduce((sum, stage) => sum + stage.distanceKm, 0) < result.stages.reduce((sum, stage) => sum + stage.distanceKm, 0));
+  assert.equal(relaxed.adaptation.paceTargetKm, 40);
+  assert.equal(relaxed.adaptation.startChange.toTown, relaxed.stages[0].startTown);
+  assert.ok(relaxed.adaptation.startChange.omittedKm > 0);
+  assert.equal(relaxed.adaptation.endChange, undefined);
+  const firstChange = relaxed.adaptation.changes[0];
+  assert.ok(firstChange.removedStartKm > 0);
+  assert.equal(firstChange.removedEndKm, 0);
+  assert.deepEqual(firstChange.newStops, []);
+  assert.ok(relaxed.adaptation.changes.filter(change => change.kind === 'split').every(change => change.newStops.length > 0));
+  assert.ok(relaxed.adaptation.redesignDecisions.length > 0);
+  const primaryDecision = relaxed.adaptation.redesignDecisions[0];
+  assert.ok(relaxed.adaptation.explanation.includes(`${primaryDecision.before.distanceKm} km en una jornada`));
+  for (const after of primaryDecision.after) assert.ok(relaxed.adaptation.explanation.includes(`${after.title}, ${after.distanceKm} km`));
+  assert.ok(relaxed.adaptation.explanation.includes(primaryDecision.reason));
+  assert.ok(relaxed.adaptation.originalStages.every(stage => relaxed.adaptation.changes.some(change => change.originalTitle === stage.title)));
+  for (const decision of relaxed.adaptation.redesignDecisions) {
+    assert.ok(source.some(stage => stage.title === decision.before.title && stage.distanceKm === decision.before.distanceKm));
+    assert.ok(decision.after.length >= 2);
+    assert.ok(decision.newStops.length > 0);
+    assert.ok(decision.reason.includes('40 km por dia'));
+    assert.ok(decision.reason.includes('7 dias'));
+    for (const after of decision.after) {
+      const actualDay = relaxed.adaptation.dailyStages.find(stage => stage.day === after.day);
+      assert.equal(after.title, actualDay.title);
+      assert.equal(after.distanceKm, actualDay.distanceKm);
+      assert.equal(after.includesOtherStageParts, actualDay.sourceParts.some(part => part.title !== decision.before.title));
+    }
+  }
+  const first = result.stages[0];
+  const services = await staticCaminoDataRepository.getServicesByStage(first.slug);
+  assert.ok(services.length > 0);
+  assert.ok(services.every((service) => service.stageSlug === first.slug && mapRepository.isOnStage(first.slug, service.coordinate)));
+  const sections = await staticCaminoDataRepository.getStageSections(first.slug);
+  assert.ok(sections?.itinerarySummary);
+  const storage = new Map();
+  const persistence = { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) };
+  const repositories = createMemoryRepositories(persistence);
+  const plan = { id: 'personalized-primitivo-test', title: 'Primitivo', routeSlug: first.routeSlug, stageSlugs: result.stages.map(stage => stage.slug), travelMode: 'bike', recommendedDays: 7 };
+  let journey = { id: 'redistributed-test', userId: 'user', campaignId: plan.id, routeSlug: first.routeSlug, activeStageSlug: first.slug, status: 'active', updatedAtIso: new Date().toISOString() };
+  await repositories.journeyRepository.saveActiveJourney(journey);
+  for (const stage of result.stages) {
+    journey = await completeJourneyStage({ repositories, campaign: plan, journey, stage, profile: { id: 'user' }, samples: [], distanceKm: mapRepository.getStageGeometry(stage.slug).distanceKm, nowIso: new Date().toISOString() });
+  }
+  assert.equal(journey.status, 'completed');
+  assert.equal((await createMemoryRepositories(persistence).journalRepository.getEntriesByJourney(journey.id)).length, 7);
 });
 
 test('all demo stages have coherent endpoints, services and simulated progress', () => {
@@ -144,6 +233,34 @@ test('profile-based candidates and accepted AI selections always have continuous
       }
     }
   }
+});
+
+test('seven-day suggestions contain seven simulated journeys and retain conservative difficulty', async () => {
+  const draft = { displayName: 'Prueba', travelMode: 'bike', availableDays: 7, budgetMode: 'austero', goal: 'llegar_a_santiago', pilgrimClasses: ['tranquilo', 'fotografico'], avoidCrowds: false };
+  const candidates = await planCampaigns(staticCaminoDataRepository, draft, { verifiedMapsOnly: true });
+  assert.ok(candidates.length >= 2);
+  for (const candidate of candidates) {
+    assert.equal(candidate.estimatedDays, 7);
+    assert.equal(candidate.stages.length, 7);
+    assert.equal(candidate.budgetEstimateEur, 175);
+    assert.equal(candidate.stageAdaptation.selectionReason, 'redistribute_days_and_pace');
+    assert.equal(candidate.stageAdaptation.paceTargetKm, 40);
+    for (const stage of candidate.stages) {
+      const definition = parsePlannedStage(stage.slug);
+      const geometry = mapRepository.getStageGeometry(stage.slug);
+      assert.ok(definition);
+      assert.ok(stage.distanceKm <= 60);
+      if (definition.parts.some(part => mapRepository.getStageDefinition(part.stageSlug).difficulty === 'alta')) assert.equal(stage.difficulty, 'alta');
+      for (const percent of [0, .5, 1]) {
+        const km = geometry.distanceKm * percent;
+        assert.ok(Math.abs(progressOnRoute(geometry.coordinates, positionOnRoute(geometry.coordinates, km)).distanceKm - km) < .01);
+      }
+    }
+  }
+  const primitivo = cyclingStagesTable.items.filter(stage => stage.routeSlug === 'camino-primitivo');
+  assert.equal(redistributeJourney(primitivo, { ...draft, availableDays: 0 }), undefined);
+  assert.equal(redistributeJourney(primitivo, { ...draft, availableDays: 1, goal: 'ruta_completa' }), undefined);
+  assert.equal(redistributeJourney([primitivo[0], primitivo[2]], draft), undefined);
 });
 
 test('director runs every 30 real minutes and manual calls obey the 30-second floor', () => {
@@ -453,6 +570,38 @@ test('planning explanations use one bounded paragraph and support the existing a
   assert.equal(isPlanningAgentOutput(output), true);
   assert.equal(isPlanningAgentOutput({ ...output, recommendations: [{ ...agent, rationale }] }), true);
   assert.equal(isPlanningAgentOutput({ ...output, recommendations: [{ ...agent, rationale: 42 }] }), false);
+});
+
+test('Boadilla cycling adaptation records exactly which stages are omitted and retained', () => {
+  const source = cyclingStagesTable.items.filter((stage) => stage.slug.startsWith('bici-camino-frances-principal-')).sort((left, right) => left.order - right.order);
+  const draft = { availableDays: 7, travelMode: 'bike', goal: 'llegar_a_santiago' };
+  const adaptation = describeStageAdaptation(source, source.slice(-7), draft);
+  assert.deepEqual(adaptation.omittedBefore.map((stage) => stage.order), [1, 2, 3, 4, 5, 6]);
+  assert.deepEqual(adaptation.retained.map((stage) => stage.originalOrder), [7, 8, 9, 10, 11, 12, 13]);
+  assert.deepEqual(adaptation.retained.map((stage) => stage.day), [1, 2, 3, 4, 5, 6, 7]);
+  assert.equal(adaptation.stageBoundariesChanged, false);
+  assert.equal(adaptation.omittedAfter.length, 0);
+  assert.equal(adaptation.selectionReason, 'fit_days_keep_arrival');
+  assert.ok(adaptation.explanation.includes('Burgos - Boadilla del Camino'));
+  assert.ok(adaptation.explanation.includes('No se divide, fusiona ni acorta'));
+  const rationale = 'Para dedicar tus siete dias al tramo final, se excluyen las jornadas anteriores a Boadilla del Camino. Se conservan Boadilla-Terradillos y las etapas siguientes hasta Santiago, sin dividir ni acortar sus recorridos. El tramo conserva patrimonio para tu perfil fotografico, pero mantiene jornadas exigentes.';
+  const displayed = formatCampaignRationale({ stages: source.slice(-7), stageAdaptation: adaptation, reasons: ['Encaja con tus dias.'], risks: ['Conserva jornadas exigentes.'] }, { reasons: ['El tramo conserva patrimonio y servicios para tu perfil fotografico.'], tradeoffs: ['Se mantienen jornadas exigentes.'], rationale });
+  assert.equal(displayed, rationale);
+  assert.ok(!displayed.includes(adaptation.explanation));
+  assert.ok(displayed.split(/\s+/).length <= 120);
+  assert.ok(!displayed.includes('\n'));
+  const head = describeStageAdaptation(source, source.slice(0, 3), { ...draft, availableDays: 3 });
+  assert.equal(head.omittedBefore.length, 0);
+  assert.equal(head.omittedAfter.length, 10);
+  assert.equal(head.selectionReason, 'fit_days_from_start');
+  const full = describeStageAdaptation(source, source, { ...draft, availableDays: 30 });
+  assert.equal(full.selectionReason, 'keep_full_path');
+  assert.equal(full.omittedBefore.length + full.omittedAfter.length, 0);
+  const branched = [...source.slice(0, 3), { ...source[2], slug: 'another-branch', title: 'Enlace de ramal' }, ...source.slice(3)];
+  const branchedAdaptation = describeStageAdaptation(branched, source.slice(-7), draft);
+  assert.equal(branchedAdaptation.omittedBefore.length, 7);
+  assert.ok(branchedAdaptation.explanation.startsWith('Se omiten 7 etapas'));
+  assert.throws(() => describeStageAdaptation(source, [source[0], source[2]], draft), /consecutivas/);
 });
 
 test('weather validates coordinates and transforms Open-Meteo without inventing alerts', async () => {

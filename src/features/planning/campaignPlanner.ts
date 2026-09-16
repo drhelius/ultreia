@@ -3,6 +3,11 @@ import type { CaminoDataRepository, CampaignTemplate } from '../../repositories'
 import type { OnboardingDraft } from '../onboarding/onboardingTypes';
 import { scoreCampaign, type CampaignRecommendation } from './campaignScorer';
 import { mapRepository } from '../../data/camino/mapRepository';
+import { describeStageAdaptation } from './campaignAdaptation';
+import type { PlanningStageAdaptation } from '../../domain/ai/planningAgentTypes';
+import { redistributeJourney } from './journeyRedistribution';
+
+type AdaptiveCampaign = CampaignTemplate & { stageAdaptation: PlanningStageAdaptation };
 
 const bySlugOrder = (stageSlugs: string[], stages: CaminoStage[]): CaminoStage[] => {
   const stageBySlug = new Map(stages.map((stage) => [stage.slug, stage]));
@@ -41,9 +46,9 @@ const selectAdaptiveStageWindow = (routeStages: CaminoStage[], draft: Onboarding
   return routeStages.slice(0, targetCount);
 };
 
-const createAdaptiveCampaigns = async (repository: CaminoDataRepository, draft: OnboardingDraft): Promise<CampaignTemplate[]> => {
+const createAdaptiveCampaigns = async (repository: CaminoDataRepository, draft: OnboardingDraft): Promise<AdaptiveCampaign[]> => {
   const routes = await repository.getRoutes();
-  const adaptiveCampaigns: CampaignTemplate[] = [];
+  const adaptiveCampaigns: AdaptiveCampaign[] = [];
 
   for (const route of routes) {
     if (excludedRouteSlugs.has(route.slug)) continue;
@@ -52,6 +57,18 @@ const createAdaptiveCampaigns = async (repository: CaminoDataRepository, draft: 
     for (const path of connectedStagePaths(stages)) {
     if (draft.goal === 'ruta_completa' && (path[0].order !== 1 || path[path.length - 1].order !== Math.max(...stages.filter((stage) => stage.variantGroup === path[0].variantGroup).map((stage) => stage.order)))) continue;
     if (['llegar_a_santiago', 'compostela_minima'].includes(draft.goal) && !endsInSantiago(path[path.length - 1].endTown)) continue;
+    const redistributed = redistributeJourney(path, draft);
+    if (redistributed) {
+      adaptiveCampaigns.push({
+        id: `campaign:personalized:${draft.travelMode}:${route.slug}:${path[0].slug}:${draft.availableDays}:${redistributed.adaptation.paceTargetKm}`,
+        title: `Ruta personalizada: ${route.title} (${redistributed.stages[0].startTown} a ${redistributed.stages[redistributed.stages.length - 1].endTown})`,
+        routeSlug: route.slug,
+        stageSlugs: redistributed.stages.map((stage) => stage.slug),
+        recommendedDays: redistributed.stages.length,
+        stageAdaptation: redistributed.adaptation,
+      });
+      continue;
+    }
     const selectedStages = selectAdaptiveStageWindow(path, draft);
     const firstStage = selectedStages[0];
     const lastStage = selectedStages[selectedStages.length - 1];
@@ -64,6 +81,7 @@ const createAdaptiveCampaigns = async (repository: CaminoDataRepository, draft: 
       routeSlug: route.slug,
       stageSlugs: selectedStages.map((stage) => stage.slug),
       recommendedDays: selectedStages.length,
+      stageAdaptation: describeStageAdaptation(path, selectedStages, draft),
     });
     }
   }
@@ -72,6 +90,10 @@ const createAdaptiveCampaigns = async (repository: CaminoDataRepository, draft: 
 };
 
 const resolveStages = async (repository: CaminoDataRepository, campaign: CampaignTemplate, draft: OnboardingDraft): Promise<CaminoStage[]> => {
+  if (campaign.stageSlugs.every((slug) => slug.startsWith('planned-v1:'))) {
+    const stages = await Promise.all(campaign.stageSlugs.map((slug) => repository.getStage(slug)));
+    return stages.filter((stage): stage is CaminoStage => Boolean(stage));
+  }
   if (draft.travelMode === 'bike') {
     const bikeStages = await repository.getStagesByRoute(campaign.routeSlug, 'bike');
     const selectedBikeStages = bySlugOrder(campaign.stageSlugs, bikeStages);
@@ -108,9 +130,19 @@ export const planCampaigns = async (repository: CaminoDataRepository, draft: Onb
     const mapAudit = mapRepository.getCampaignAudit(stages.map((stage) => stage.slug));
     if (options.verifiedMapsOnly && !mapAudit.ready) continue;
     const recommendation = scoreCampaign({ campaign, route, stages, draft, budgetProfile });
+    recommendation.stageAdaptation = adaptiveCampaigns.find((item) => item.id === campaign.id)?.stageAdaptation
+      ?? describeStageAdaptation(stages, stages, draft, 'selected_catalog_stages');
     if (!mapAudit.ready) recommendation.risks.unshift(`Mapa incompleto: ${mapAudit.verifiedCount}/${mapAudit.totalCount} etapas verificadas.${mapAudit.issues.length ? ' Hay discontinuidades entre etapas.' : ''} No disponible para demostracion.`);
     recommendations.push(recommendation);
   }
 
-  return recommendations.sort((left, right) => Number(mapRepository.getCampaignAudit(right.stages.map((stage) => stage.slug)).ready) - Number(mapRepository.getCampaignAudit(left.stages.map((stage) => stage.slug)).ready) || right.score - left.score).slice(0, 5);
+  const exact = recommendations.filter((item) => item.estimatedDays === draft.availableDays && item.stageAdaptation?.selectionReason === 'redistribute_days_and_pace');
+  const eligible = exact.length ? exact : recommendations;
+  const seenItineraries = new Set<string>();
+  return eligible.sort((left, right) => Number(mapRepository.getCampaignAudit(right.stages.map((stage) => stage.slug)).ready) - Number(mapRepository.getCampaignAudit(left.stages.map((stage) => stage.slug)).ready) || right.score - left.score).filter((item) => {
+    const key = item.stages.map((stage) => `${stage.startTown}:${stage.endTown}`).join('|');
+    if (seenItineraries.has(key)) return false;
+    seenItineraries.add(key);
+    return true;
+  }).slice(0, 5);
 };

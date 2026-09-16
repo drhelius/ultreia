@@ -3,6 +3,7 @@ import { findServicesNear } from '../../domain/camino/nearbyServices';
 import type { SearchResult, StageSections, TravelMode } from '../../domain';
 import { along, length, lineString, nearestPointOnLine, point } from '@turf/turf';
 import { mapRepository } from './mapRepository';
+import { parsePlannedStage } from './plannedStages';
 import type {
   CaminoDataRepository,
   CampaignTemplate,
@@ -58,7 +59,7 @@ export class StaticCaminoDataRepository implements CaminoDataRepository {
   }
 
   async getStage(stageSlug: string) {
-    return [...stagesTable.items, ...cyclingStagesTable.items].find((stage) => stage.slug === stageSlug);
+    return mapRepository.getStageDefinition(stageSlug);
   }
 
   async getTowns() {
@@ -73,7 +74,7 @@ export class StaticCaminoDataRepository implements CaminoDataRepository {
     const direct = stageSectionsTable.items.find((sections) => sections.stageSlug === stageSlug);
     if (direct) return direct;
     if (this.sectionCache.has(stageSlug)) return this.sectionCache.get(stageSlug);
-    const stage = cyclingStagesTable.items.find((item) => item.slug === stageSlug);
+    const stage = mapRepository.getStageDefinition(stageSlug);
     const geometry = mapRepository.getStageGeometry(stageSlug);
     if (!stage || !geometry) return undefined;
     const route = lineString(geometry.coordinates);
@@ -81,6 +82,7 @@ export class StaticCaminoDataRepository implements CaminoDataRepository {
       const path = mapRepository.getStageGeometry(item.slug);
       const sections = stageSectionsTable.items.find((section) => section.stageSlug === item.slug);
       if (!path || !sections) return [];
+      if (!mapRepository.isOnStage(stageSlug, { longitude: path.coordinates[0][0], latitude: path.coordinates[0][1] })) return [];
       const line = lineString(path.coordinates);
       const samples = [point(path.coordinates[0]), along(line, length(line) / 2), point(path.coordinates[path.coordinates.length - 1])];
       const projected = samples.map((sample) => nearestPointOnLine(route, sample));
@@ -101,18 +103,25 @@ export class StaticCaminoDataRepository implements CaminoDataRepository {
   }
 
   async getStagePoints(stageSlug: string) {
+    if (parsePlannedStage(stageSlug)) return stagePointsTable.items.filter((item) => item.coordinateStatus === 'verified' && mapRepository.isOnStage(stageSlug, item.coordinate)).map((item) => ({ ...item, stageSlug }));
     return stagePointsTable.items.filter((point) => point.stageSlug === stageSlug);
   }
 
   async getHostelsByStage(stageSlug: string) {
+    if (parsePlannedStage(stageSlug)) return hostelsTable.items.filter((item) => item.coordinateStatus === 'verified' && mapRepository.isOnStage(stageSlug, item.coordinate)).map((item) => ({ ...item, stageSlug }));
     return hostelsTable.items.filter((hostel) => hostel.stageSlug === stageSlug);
   }
 
   async getMonumentsByStage(stageSlug: string) {
+    if (parsePlannedStage(stageSlug)) return monumentsTable.items.filter((item) => item.coordinateStatus === 'verified' && mapRepository.isOnStage(stageSlug, item.coordinate)).map((item) => ({ ...item, stageSlug }));
     return monumentsTable.items.filter((monument) => monument.stageSlug === stageSlug);
   }
 
   async getServicesByStage(stageSlug: string, types?: Parameters<CaminoDataRepository['getServicesByStage']>[1]) {
+    if (parsePlannedStage(stageSlug)) {
+      const services = [...servicesTable.items.filter((item) => item.coordinateStatus === 'verified' && mapRepository.isOnStage(stageSlug, item.coordinate)), ...mapRepository.getServices(stageSlug)];
+      return [...new Map(services.filter((item) => !types || types.includes(item.type)).map((item) => [item.geocoding?.placeId ?? item.id, { ...item, stageSlug }])).values()];
+    }
     return [...servicesTable.items.filter((service) => service.stageSlug === stageSlug), ...mapRepository.getServices(stageSlug)].filter((service) => {
       const matchesStage = service.stageSlug === stageSlug;
       const matchesType = !types || types.includes(service.type);

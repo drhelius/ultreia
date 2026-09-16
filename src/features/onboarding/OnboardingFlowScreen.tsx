@@ -93,6 +93,7 @@ export function OnboardingFlowScreen({ onCompleted }: OnboardingFlowScreenProps)
       budgetEstimateEur: recommendation.budgetEstimateEur,
       reasons: recommendation.reasons,
       risks: recommendation.risks,
+      stageAdaptation: recommendation.stageAdaptation,
       routeSelection: {
         startTown: recommendation.stages[0].startTown,
         endTown: recommendation.stages[recommendation.stages.length - 1].endTown,

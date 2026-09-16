@@ -2,6 +2,7 @@ import type { Evidence } from '../../core';
 import type { BudgetProfile, CaminoRoute, CaminoStage } from '../../domain';
 import type { CampaignTemplate } from '../../repositories';
 import type { OnboardingDraft } from '../onboarding/onboardingTypes';
+import type { PlanningStageAdaptation } from '../../domain/ai/planningAgentTypes';
 
 export type CampaignRecommendation = {
   campaign: CampaignTemplate;
@@ -17,6 +18,7 @@ export type CampaignRecommendation = {
   reasons: string[];
   risks: string[];
   evidence: Evidence[];
+  stageAdaptation?: PlanningStageAdaptation;
 };
 
 const difficultyRank: Record<CaminoStage['difficulty'], number> = {
@@ -87,10 +89,13 @@ export const scoreCampaign = ({
   if (difficulty === 'alta') risks.push('Incluye etapas de dificultad alta.');
   if (dailyKm > (draft.travelMode === 'bike' ? 70 : draft.travelMode === 'car' ? 180 : 28)) risks.push('Exige jornadas largas para tu disponibilidad.');
   if (draft.avoidCrowds && campaign.title.toLowerCase().includes('sarria')) risks.push('Puede estar concurrida en temporada alta.');
+  if (dayDelta) risks.push(`No cubre exactamente los ${draft.availableDays} dias solicitados: ofrece ${estimatedDays}.`);
+  const personalized = stages.some((stage) => stage.slug.startsWith('planned-v1:'));
+  if (personalized) risks.push('Paradas en localidades cartografiadas; alojamiento y transitabilidad actual no confirmados. La dificultad original del terreno se conserva.');
 
   const reasons = [
     `Encaja con ${estimatedDays} dias estimados frente a tus ${draft.availableDays} dias.`,
-    `Usa ${stages.length} etapas del data pack local con ${totalKm} km totales.`,
+    personalized ? `Reparte el trazado del catalogo en ${stages.length} jornadas personalizadas con ${totalKm} km totales.` : `Usa ${stages.length} etapas del data pack local con ${totalKm} km totales.`,
     `Presupuesto estimado en modo ${budgetProfile.mode}: ${budgetProfile.dailyTargetEur * estimatedDays} EUR.`,
   ];
 
