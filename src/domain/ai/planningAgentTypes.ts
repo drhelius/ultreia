@@ -33,6 +33,16 @@ export type PlanningAgentCatalog = {
     budgetEstimateEur: number;
     reasons: string[];
     risks: string[];
+    routeSelection?: {
+      startTown: string;
+      endTown: string;
+      stageCount: number;
+      travelMode: TravelMode;
+      variantGroups: string[];
+      viaTowns: string[];
+      startsAtBaseOrigin: boolean;
+      endsAtBaseDestination: boolean;
+    };
     route: {
       title: string;
       subtitle: string;
@@ -74,6 +84,7 @@ export type PlanningAgentInput = {
     target: string;
     budgetMode: BudgetMode;
     avoidCrowds: boolean;
+    additionalRequirements?: string;
   };
   deterministicRanking: Array<{
     campaignId: string;
@@ -86,6 +97,11 @@ export type PlanningAgentInput = {
     risks: string[];
   }>;
   catalog: PlanningAgentCatalog;
+  explanationGuidance?: {
+    format: 'single_paragraph';
+    maxWords: number;
+    instruction: string;
+  };
 };
 
 export type PlanningAgentOutput = {
@@ -97,6 +113,7 @@ export type PlanningAgentOutput = {
     reasons: string[];
     tradeoffs: string[];
     headline: string;
+    rationale?: string;
   }>;
   globalAdvice: string[];
   requiresUserChoice: boolean;

@@ -14,6 +14,7 @@ export const isPlanningAgentOutput = (value: unknown): value is PlanningAgentOut
     && typeof recommendation.fitScore === 'number'
     && isStringArray(recommendation.reasons)
     && isStringArray(recommendation.tradeoffs)
+    && (recommendation.rationale === undefined || typeof recommendation.rationale === 'string')
     && typeof recommendation.headline === 'string');
 };
 

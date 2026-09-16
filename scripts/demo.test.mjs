@@ -13,9 +13,9 @@ const { DeterministicDecisionEngine } = require('/tmp/ultreia-data-validate/src/
 const { DirectorSchedule } = require('/tmp/ultreia-data-validate/src/domain/decision/DirectorSchedule');
 const { applyPolicyGates, isLocationSetupRecommendation } = require('/tmp/ultreia-data-validate/src/domain/decision/PolicyGates');
 const { enrichDirectorContext, recommendationsForDay, localRecommendationDate } = require('/tmp/ultreia-data-validate/src/domain/decision/directorContext');
-const { isDirectorAgentOutput } = require('/tmp/ultreia-data-validate/src/services/ai/agentValidators');
+const { isDirectorAgentOutput, isPlanningAgentOutput } = require('/tmp/ultreia-data-validate/src/services/ai/agentValidators');
 const { planCampaigns } = require('/tmp/ultreia-data-validate/src/features/planning/campaignPlanner');
-const { selectPlannerRecommendations, recommendationToCampaignPlan } = require('/tmp/ultreia-data-validate/src/features/planning/campaignPresenter');
+const { selectPlannerRecommendations, recommendationToCampaignPlan, formatCampaignRationale } = require('/tmp/ultreia-data-validate/src/features/planning/campaignPresenter');
 const { staticCaminoDataRepository } = require('/tmp/ultreia-data-validate/src/data/camino');
 const { findServicesNear } = require('/tmp/ultreia-data-validate/src/domain/camino/nearbyServices');
 const { buildAssistantContext } = require('/tmp/ultreia-data-validate/src/features/ai-chat/buildAssistantContext');
@@ -430,6 +430,29 @@ test('complete chat history survives reload and clear starts a new exchange with
   const newMessage = { ...messages[0], id: 'new-message', body: 'Nueva conversacion' };
   await cleared.chatRepository.saveMessage(newMessage);
   assert.deepEqual(await cleared.chatRepository.getMessages(thread.id), [newMessage]);
+});
+
+test('planning explanations use one bounded paragraph and support the existing agent schema', () => {
+  const recommendation = { stages: [{ startTown: 'Sarria' }, { endTown: 'Santiago' }], reasons: ['Dos etapas del catalogo.'], risks: ['Coste aproximado.'] };
+  const agent = { campaignId: 'test', fitScore: .9, headline: 'Opcion cultural', reasons: ['Encaja con tu disponibilidad', 'Incluye el patrimonio que te interesa.'], tradeoffs: ['La segunda jornada es mas larga.'] };
+  const legacy = formatCampaignRationale(recommendation, agent);
+  assert.ok(formatCampaignRationale(recommendation).includes('Sarria a Santiago'));
+  assert.ok(!legacy.startsWith('El recorrido va de'));
+  assert.ok(legacy.includes('Encaja con tu disponibilidad.'));
+  assert.ok(legacy.includes('Incluye el patrimonio que te interesa.'));
+  assert.ok(legacy.includes('La segunda jornada es mas larga.'));
+  assert.equal(legacy.includes('\n'), false);
+  const rationale = 'He elegido el tramo final desde Sarria.\n\nSe ajusta a tus dias y mantiene las visitas culturales.\n El coste es estimado.';
+  assert.equal(formatCampaignRationale(recommendation, { ...agent, rationale }), 'He elegido el tramo final desde Sarria. Se ajusta a tus dias y mantiene las visitas culturales. El coste es estimado.');
+  assert.equal(formatCampaignRationale(recommendation, { ...agent, rationale: '   ' }), legacy);
+  const lengthy = formatCampaignRationale(recommendation, { ...agent, rationale: 'Una explicacion demasiado larga para esta tarjeta. '.repeat(50) });
+  assert.ok(lengthy.split(/\s+/).length <= 120);
+  assert.ok(lengthy.endsWith('.'));
+  assert.ok(formatCampaignRationale(recommendation, { ...agent, rationale: 'palabra '.repeat(200) }).split(/\s+/).length <= 120);
+  const output = { schemaVersion: '1.0', summary: 'Resumen', recommendations: [agent], globalAdvice: [], requiresUserChoice: true };
+  assert.equal(isPlanningAgentOutput(output), true);
+  assert.equal(isPlanningAgentOutput({ ...output, recommendations: [{ ...agent, rationale }] }), true);
+  assert.equal(isPlanningAgentOutput({ ...output, recommendations: [{ ...agent, rationale: 42 }] }), false);
 });
 
 test('weather validates coordinates and transforms Open-Meteo without inventing alerts', async () => {

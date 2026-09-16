@@ -17,6 +17,7 @@ export type OnboardingDraft = {
   budgetMode: BudgetMode;
   goal: CampaignGoal;
   avoidCrowds: boolean;
+  additionalRequirements?: string;
 };
 
-export type OnboardingStep = 'profile' | 'mode' | 'classes' | 'availability' | 'goal' | 'budget' | 'planning' | 'recommendations';
+export type OnboardingStep = 'profile' | 'mode' | 'classes' | 'availability' | 'goal' | 'budget' | 'requirements' | 'planning' | 'recommendations';

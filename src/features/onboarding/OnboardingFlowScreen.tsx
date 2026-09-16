@@ -4,11 +4,11 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, 
 import { appConfig, systemClock } from '../../core';
 import { mapRepository } from '../../data/camino/mapRepository';
 import { staticCaminoDataRepository } from '../../data/camino';
-import type { ActiveJourney, PilgrimClass, PlanningAgentCatalog, StageProgress, UserPreferences, UserProfile } from '../../domain';
+import type { ActiveJourney, PilgrimClass, PlanningAgentCatalog, PlanningAgentOutput, StageProgress, UserPreferences, UserProfile } from '../../domain';
 import { useLocalPersistence } from '../../persistence';
 import { PlanningAgentClient } from '../../services';
 import { recommendationToCampaignPlan, type CampaignRecommendation, planCampaigns } from '../planning';
-import { selectPlannerRecommendations } from '../planning/campaignPresenter';
+import { formatCampaignRationale, planningExplanationGuidance, selectPlannerRecommendations } from '../planning/campaignPresenter';
 import { MapCanvas } from '../live-map/MapCanvas';
 import type { MapItineraryStage } from '../live-map/mapDocument';
 import { budgetModeOptions, dayOptions, goalOptions, pilgrimClassOptions, travelModeOptions } from './onboardingOptions';
@@ -18,17 +18,11 @@ type OnboardingFlowScreenProps = {
   onCompleted: () => void;
 };
 
-type PlannerRecommendationView = {
-  campaignId: string;
-  fitScore: number;
-  headline: string;
-  reasons: string[];
-  tradeoffs: string[];
-};
+type PlannerRecommendationView = PlanningAgentOutput['recommendations'][number];
 
 type Option<TValue extends string | number> = { label: string; value: TValue };
 
-const steps: OnboardingStep[] = ['profile', 'mode', 'classes', 'availability', 'goal', 'budget', 'recommendations'];
+const steps: OnboardingStep[] = ['profile', 'mode', 'classes', 'availability', 'goal', 'budget', 'requirements', 'recommendations'];
 
 const initialDraft: OnboardingDraft = {
   displayName: 'Peregrino',
@@ -38,9 +32,11 @@ const initialDraft: OnboardingDraft = {
   budgetMode: 'equilibrado',
   goal: 'llegar_a_santiago',
   avoidCrowds: false,
+  additionalRequirements: '',
 };
 
 const createLocalId = (scope: string): string => `${scope}:${Date.now()}`;
+const normalizedTown = (name: string) => name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
 export function OnboardingFlowScreen({ onCompleted }: OnboardingFlowScreenProps) {
   const persistence = useLocalPersistence();
@@ -97,6 +93,16 @@ export function OnboardingFlowScreen({ onCompleted }: OnboardingFlowScreenProps)
       budgetEstimateEur: recommendation.budgetEstimateEur,
       reasons: recommendation.reasons,
       risks: recommendation.risks,
+      routeSelection: {
+        startTown: recommendation.stages[0].startTown,
+        endTown: recommendation.stages[recommendation.stages.length - 1].endTown,
+        stageCount: recommendation.stages.length,
+        travelMode: draft.travelMode,
+        variantGroups: [...new Set(recommendation.stages.map((stage) => stage.variantGroup))],
+        viaTowns: [...new Set(recommendation.stages.flatMap((stage) => stage.viaTowns ?? []))],
+        startsAtBaseOrigin: normalizedTown(recommendation.stages[0].startTown) === normalizedTown(recommendation.route.startTown),
+        endsAtBaseDestination: normalizedTown(recommendation.stages[recommendation.stages.length - 1].endTown) === normalizedTown(recommendation.route.endTown),
+      },
       route: {
         title: recommendation.route.title,
         subtitle: recommendation.route.subtitle,
@@ -179,6 +185,7 @@ export function OnboardingFlowScreen({ onCompleted }: OnboardingFlowScreenProps)
           target: draft.goal,
           budgetMode: draft.budgetMode,
           avoidCrowds: draft.avoidCrowds,
+          additionalRequirements: draft.additionalRequirements?.trim() || undefined,
         },
         deterministicRanking: nextRecommendations.map((recommendation) => ({
           campaignId: recommendation.campaign.id,
@@ -191,6 +198,7 @@ export function OnboardingFlowScreen({ onCompleted }: OnboardingFlowScreenProps)
           risks: recommendation.risks,
         })),
         catalog,
+        explanationGuidance: planningExplanationGuidance,
       }, 'onboarding-user');
 
       const selected = selectPlannerRecommendations(nextRecommendations, plannerOutput.recommendations.map((item) => item.campaignId));
@@ -215,7 +223,7 @@ export function OnboardingFlowScreen({ onCompleted }: OnboardingFlowScreenProps)
       return;
     }
     setError(undefined);
-    if (step === 'budget') {
+    if (step === 'requirements') {
       await runPlanner();
       return;
     }
@@ -325,6 +333,9 @@ export function OnboardingFlowScreen({ onCompleted }: OnboardingFlowScreenProps)
     if (step === 'budget') {
       return <SingleOptionGroup options={budgetModeOptions} selected={draft.budgetMode} onSelect={(value) => updateDraft('budgetMode', value)} />;
     }
+    if (step === 'requirements') {
+      return <TextInput accessibilityLabel="Requisitos personales" value={draft.additionalRequirements ?? ''} onChangeText={(value) => updateDraft('additionalRequirements', value)} multiline maxLength={2000} placeholder="Requisitos o preferencias personales" placeholderTextColor="#6F858C" style={[styles.input, styles.requirementsInput]} />;
+    }
     return (
       <View style={styles.section}>
         {plannerSummary ? <Text style={styles.plannerSummary}>{plannerSummary}</Text> : null}
@@ -338,11 +349,9 @@ export function OnboardingFlowScreen({ onCompleted }: OnboardingFlowScreenProps)
                 <Text style={styles.campaignTitle}>{recommendation.campaign.title}</Text>
                 <Text style={styles.score}>{Math.round(fitScore * 100)}%</Text>
               </View>
-              {plannerRecommendation?.headline ? <Text style={styles.reason}>{plannerRecommendation.headline}</Text> : null}
               <Text style={styles.campaignMeta}>{recommendation.totalKm} km · {recommendation.estimatedDays} dias · dificultad {recommendation.difficulty} · {recommendation.budgetEstimateEur} EUR</Text>
               {!campaignAudits.get(recommendation.campaign.id)?.ready ? <Text style={styles.risk}>Mapa incompleto · {campaignAudits.get(recommendation.campaign.id)?.verifiedCount ?? 0}/{recommendation.stages.length} etapas verificadas</Text> : null}
-              <Text style={styles.reason}>{plannerRecommendation?.reasons[0] ?? recommendation.reasons[0]}</Text>
-              {(plannerRecommendation?.tradeoffs[0] ?? recommendation.risks[0]) ? <Text style={styles.risk}>{plannerRecommendation?.tradeoffs[0] ?? recommendation.risks[0]}</Text> : null}
+              <Text style={styles.rationale}>{formatCampaignRationale(recommendation, plannerRecommendation)}</Text>
             </Pressable>
           );
         })}
@@ -370,7 +379,7 @@ export function OnboardingFlowScreen({ onCompleted }: OnboardingFlowScreenProps)
         {stepIndex > 0 ? <Pressable accessibilityRole="button" style={styles.secondaryButton} onPress={goBack}><Text style={styles.secondaryButtonText}>Anterior</Text></Pressable> : null}
         {step === 'recommendations'
           ? <Pressable accessibilityRole="button" disabled={saving || !canConfirmCampaign} style={[styles.primaryButton, (saving || !canConfirmCampaign) && styles.primaryButtonDisabled]} onPress={completeOnboarding}><Text style={styles.primaryButtonText}>{saving ? 'Guardando...' : 'Empezar mi Camino'}</Text></Pressable>
-          : <Pressable accessibilityRole="button" disabled={planning} style={[styles.primaryButton, planning && styles.primaryButtonDisabled]} onPress={() => void goNext()}><Text style={styles.primaryButtonText}>{planning ? 'Consultando planner...' : step === 'budget' ? 'Ver recomendaciones' : 'Siguiente'}</Text></Pressable>}
+          : <Pressable accessibilityRole="button" disabled={planning} style={[styles.primaryButton, planning && styles.primaryButtonDisabled]} onPress={() => void goNext()}><Text style={styles.primaryButtonText}>{planning ? 'Consultando planner...' : step === 'requirements' ? 'Ver recomendaciones' : 'Siguiente'}</Text></Pressable>}
       </View>}
     </ScrollView>
   );
@@ -384,6 +393,7 @@ function stepTitle(step: OnboardingStep): string {
     availability: 'Cuantos dias tienes?',
     goal: 'Cual es tu objetivo?',
     budget: 'Como quieres viajar?',
+    requirements: 'Tus requisitos',
     planning: 'Preparando tu recomendacion',
     recommendations: 'Elige tu ruta',
   };
@@ -398,6 +408,7 @@ function stepSubtitle(step: OnboardingStep): string {
     availability: 'La disponibilidad ajusta etapas, presupuesto y dificultad.',
     goal: 'El planner priorizara rutas segun lo que quieras vivir.',
     budget: 'Usamos perfiles del data pack para estimar coste total.',
+    requirements: 'Opcional · Hasta 2000 caracteres.',
     planning: 'La IA esta leyendo el contexto completo para proponer una ruta coherente.',
     recommendations: 'Tu Camino, etapa a etapa.',
   };
@@ -467,20 +478,22 @@ const createStyles = () => StyleSheet.create({
   error: { color: '#F97316', fontSize: 14, fontWeight: '700' },
   header: { gap: 8, paddingTop: 12 },
   input: { backgroundColor: '#102A36', borderColor: '#25485A', borderRadius: 8, borderWidth: 1, color: '#F4F0E8', fontSize: 16, paddingHorizontal: 12, paddingVertical: 12 },
+  requirementsInput: { minHeight: 160, textAlignVertical: 'top' },
   mapBox: { backgroundColor: '#071923', borderColor: '#25485A', borderRadius: 8, borderWidth: 1, height: 360, overflow: 'hidden' },
   mapText: { color: '#A9B7B7', fontSize: 13, padding: 12, textAlign: 'center' },
-  navigationRow: { flexDirection: 'row', gap: 10 },
+  navigationRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   optionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   overline: { color: '#F4B321', fontSize: 12, fontWeight: '900', textTransform: 'uppercase' },
   plannerSummary: { backgroundColor: '#17372F', borderColor: '#25485A', borderRadius: 10, borderWidth: 1, color: '#F4F0E8', fontSize: 14, lineHeight: 20, padding: 12 },
-  primaryButton: { alignItems: 'center', backgroundColor: '#F4B321', borderRadius: 10, flex: 1, paddingVertical: 14 },
+  primaryButton: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#F4B321', borderRadius: 10, flex: 1, minWidth: 190, paddingHorizontal: 12, paddingVertical: 14 },
   primaryButtonDisabled: { opacity: 0.5 },
-  primaryButtonText: { color: '#071923', fontSize: 16, fontWeight: '900' },
+  primaryButtonText: { color: '#071923', fontSize: 16, fontWeight: '900', textAlign: 'center' },
   reason: { color: '#F4F0E8', fontSize: 13, lineHeight: 19 },
+  rationale: { color: '#F4F0E8', fontSize: 14, lineHeight: 21 },
   risk: { color: '#F97316', fontSize: 13, lineHeight: 19 },
   routeDetail: { gap: 10 },
   score: { color: '#F4B321', fontSize: 16, fontWeight: '900' },
-  secondaryButton: { alignItems: 'center', backgroundColor: '#17372F', borderColor: '#25485A', borderRadius: 10, borderWidth: 1, flex: 1, paddingVertical: 14 },
+  secondaryButton: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#17372F', borderColor: '#25485A', borderRadius: 10, borderWidth: 1, flex: 1, minWidth: 100, paddingVertical: 14 },
   secondaryButtonText: { color: '#F4F0E8', fontSize: 16, fontWeight: '900' },
   section: { gap: 10 },
   sectionTitle: { color: '#F4B321', fontSize: 20, fontWeight: '900' },
