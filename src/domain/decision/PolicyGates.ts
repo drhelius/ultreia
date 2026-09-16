@@ -1,4 +1,11 @@
 import type { DecisionOutput, DecisionRecommendation } from './decisionTypes';
+import { recommendationsEquivalent } from './recommendationSimilarity';
+
+export const isLocationSetupRecommendation = (recommendation: DecisionRecommendation): boolean =>
+  recommendation.id.endsWith('decision:tracking:registrar-ubicacion')
+  || recommendation.id.endsWith('decision:tracking:mas-muestras')
+  || recommendation.deduplicationKey === 'registrar:gps'
+  || recommendation.evidence.some((evidence) => evidence.sourceId === 'missing-location' || evidence.sourceId === 'eta-needs-samples');
 
 const byPriority = (left: DecisionRecommendation, right: DecisionRecommendation) => {
   const rank = { critica: 4, alta: 3, media: 2, baja: 1 };
@@ -12,23 +19,23 @@ export const applyPolicyGates = ({
   output: DecisionOutput;
   recentRecommendations: DecisionRecommendation[];
 }): DecisionOutput => {
-  const recentTitles = new Set(recentRecommendations.map((recommendation) => recommendation.title));
   const accepted: DecisionRecommendation[] = [];
   const discarded: DecisionRecommendation[] = [...output.discardedRecommendations];
 
-  for (const recommendation of output.recommendations) {
-    if (recommendation.evidence.length === 0) {
+  for (const candidate of [...output.recommendations].sort(byPriority)) {
+    const recommendation = candidate.priority === 'critica' && candidate.evidence.some((evidence) => evidence.confidence === 'baja') ? { ...candidate, priority: 'alta' as const } : candidate;
+    if (recommendation.evidence.length === 0 || isLocationSetupRecommendation(recommendation)) {
       discarded.push(recommendation);
       continue;
     }
 
-    if (recentTitles.has(recommendation.title) && recommendation.priority !== 'critica') {
+    if (accepted.some((previous) => recommendationsEquivalent(previous, recommendation)) || (recommendation.priority !== 'critica' && recentRecommendations.some((previous) => recommendationsEquivalent(previous, recommendation)))) {
       discarded.push(recommendation);
       continue;
     }
 
-    if (recommendation.evidence.some((evidence) => evidence.confidence === 'baja') && recommendation.priority === 'critica') {
-      accepted.push({ ...recommendation, priority: 'alta' });
+    if (accepted.length >= 4) {
+      discarded.push(recommendation);
       continue;
     }
 

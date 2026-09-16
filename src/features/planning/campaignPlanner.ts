@@ -2,6 +2,7 @@ import type { BudgetProfile, CaminoStage } from '../../domain';
 import type { CaminoDataRepository, CampaignTemplate } from '../../repositories';
 import type { OnboardingDraft } from '../onboarding/onboardingTypes';
 import { scoreCampaign, type CampaignRecommendation } from './campaignScorer';
+import { mapRepository } from '../../data/camino/mapRepository';
 
 const bySlugOrder = (stageSlugs: string[], stages: CaminoStage[]): CaminoStage[] => {
   const stageBySlug = new Map(stages.map((stage) => [stage.slug, stage]));
@@ -14,6 +15,20 @@ const excludedRouteSlugs = new Set(['epilogo-a-fisterra-y-muxia']);
 const endsInSantiago = (value: string): boolean => value.toLowerCase().includes('santiago');
 
 const desiredStageCount = (draft: OnboardingDraft): number => (draft.travelMode === 'car' ? draft.availableDays * 3 : draft.availableDays);
+
+export const connectedStagePaths = (stages: CaminoStage[]): CaminoStage[][] => {
+  const verified = stages.filter((stage) => mapRepository.getStageAudit(stage.slug).status === 'verified');
+  const nextBySlug = new Map(verified.map((stage) => [stage.slug, verified.filter((next) => next.slug !== stage.slug && mapRepository.getCampaignAudit([stage.slug, next.slug]).ready)]));
+  const hasPrevious = new Set([...nextBySlug.values()].flatMap((items) => items.map((stage) => stage.slug)));
+  const paths: CaminoStage[][] = [];
+  const visit = (path: CaminoStage[]) => {
+    const next = (nextBySlug.get(path[path.length - 1].slug) ?? []).filter((stage) => !path.some((item) => item.slug === stage.slug));
+    if (!next.length) paths.push(path);
+    else for (const stage of next) visit([...path, stage]);
+  };
+  for (const stage of verified.filter((stage) => !hasPrevious.has(stage.slug))) visit([stage]);
+  return paths;
+};
 
 const selectAdaptiveStageWindow = (routeStages: CaminoStage[], draft: OnboardingDraft): CaminoStage[] => {
   const targetCount = Math.max(1, desiredStageCount(draft));
@@ -34,19 +49,23 @@ const createAdaptiveCampaigns = async (repository: CaminoDataRepository, draft: 
     if (excludedRouteSlugs.has(route.slug)) continue;
 
     const stages = await repository.getStagesByRoute(route.slug, draft.travelMode === 'bike' ? 'bike' : 'walk');
-    const selectedStages = selectAdaptiveStageWindow(stages, draft);
+    for (const path of connectedStagePaths(stages)) {
+    if (draft.goal === 'ruta_completa' && (path[0].order !== 1 || path[path.length - 1].order !== Math.max(...stages.filter((stage) => stage.variantGroup === path[0].variantGroup).map((stage) => stage.order)))) continue;
+    if (['llegar_a_santiago', 'compostela_minima'].includes(draft.goal) && !endsInSantiago(path[path.length - 1].endTown)) continue;
+    const selectedStages = selectAdaptiveStageWindow(path, draft);
     const firstStage = selectedStages[0];
     const lastStage = selectedStages[selectedStages.length - 1];
 
     if (!firstStage || !lastStage) continue;
 
     adaptiveCampaigns.push({
-      id: `campaign:adaptive:${draft.travelMode}:${route.slug}:${firstStage.order}-${lastStage.order}:${draft.availableDays}`,
+      id: `campaign:adaptive:${draft.travelMode}:${route.slug}:${firstStage.slug}:${lastStage.slug}:${draft.availableDays}`,
       title: `Ruta adaptada: ${route.title} (${firstStage.startTown} a ${lastStage.endTown})`,
       routeSlug: route.slug,
       stageSlugs: selectedStages.map((stage) => stage.slug),
       recommendedDays: selectedStages.length,
     });
+    }
   }
 
   return adaptiveCampaigns;
@@ -65,7 +84,7 @@ const resolveStages = async (repository: CaminoDataRepository, campaign: Campaig
   return bySlugOrder(campaign.stageSlugs, routeStages);
 };
 
-export const planCampaigns = async (repository: CaminoDataRepository, draft: OnboardingDraft): Promise<CampaignRecommendation[]> => {
+export const planCampaigns = async (repository: CaminoDataRepository, draft: OnboardingDraft, options: { verifiedMapsOnly?: boolean } = {}): Promise<CampaignRecommendation[]> => {
   const [templateCampaigns, adaptiveCampaigns, budgetProfiles] = await Promise.all([repository.getCampaignTemplates(), createAdaptiveCampaigns(repository, draft), repository.getBudgetProfiles()]);
   const campaigns = [...templateCampaigns.filter((campaign) => !excludedRouteSlugs.has(campaign.routeSlug)), ...adaptiveCampaigns];
   const budgetProfile = budgetProfiles.find((profile) => profile.mode === draft.budgetMode) ?? budgetProfiles[0];
@@ -86,8 +105,12 @@ export const planCampaigns = async (repository: CaminoDataRepository, draft: Onb
     const stages = await resolveStages(repository, campaign, draft);
     if (stages.length === 0) continue;
 
-    recommendations.push(scoreCampaign({ campaign, route, stages, draft, budgetProfile }));
+    const mapAudit = mapRepository.getCampaignAudit(stages.map((stage) => stage.slug));
+    if (options.verifiedMapsOnly && !mapAudit.ready) continue;
+    const recommendation = scoreCampaign({ campaign, route, stages, draft, budgetProfile });
+    if (!mapAudit.ready) recommendation.risks.unshift(`Mapa incompleto: ${mapAudit.verifiedCount}/${mapAudit.totalCount} etapas verificadas.${mapAudit.issues.length ? ' Hay discontinuidades entre etapas.' : ''} No disponible para demostracion.`);
+    recommendations.push(recommendation);
   }
 
-  return recommendations.sort((left, right) => right.score - left.score).slice(0, 5);
+  return recommendations.sort((left, right) => Number(mapRepository.getCampaignAudit(right.stages.map((stage) => stage.slug)).ready) - Number(mapRepository.getCampaignAudit(left.stages.map((stage) => stage.slug)).ready) || right.score - left.score).slice(0, 5);
 };

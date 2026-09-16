@@ -12,6 +12,8 @@ import type {
   StageSections,
   TravelMode,
 } from '../domain';
+import type { Coordinates } from '../core';
+import type { NearbyServiceSearch } from '../domain/camino/nearbyServices';
 
 export type CampaignTemplate = {
   id: string;
@@ -44,6 +46,7 @@ export type CaminoDataRepository = {
   getHostelsByStage(stageSlug: string): Promise<Hostel[]>;
   getMonumentsByStage(stageSlug: string): Promise<Monument[]>;
   getServicesByStage(stageSlug: string, types?: ServiceType[]): Promise<CaminoService[]>;
+  getNearbyServices(origin: Coordinates, radiusKm?: number, limitPerCategory?: number): Promise<NearbyServiceSearch>;
   searchByText(query: string, scope?: SearchScope): Promise<SearchResult[]>;
   getCampaignTemplates(): Promise<CampaignTemplate[]>;
   getQuestTemplatesForStage(stageSlug: string): Promise<QuestTemplate[]>;

@@ -1,7 +1,7 @@
 import { StyleSheet, Text, View } from 'react-native';
 
 import type { ActiveJourney, CampaignPlan, CaminoRoute, CaminoStage, UserProfile } from '../../../domain';
-import { Badge, CredentialCard, ProgressBar, StatTile, Surface } from '../../../ui/components';
+import { Badge, Button, CredentialCard, ProgressBar, StatTile, Surface } from '../../../ui/components';
 import type { EngagementState } from '../../engagement';
 import type { LiveTrackingState } from '../../live-map';
 
@@ -13,9 +13,12 @@ type MyCaminoViewProps = {
   activeStage?: CaminoStage;
   tracking: LiveTrackingState;
   engagement: EngagementState;
+  onMap?: () => void;
+  onCredential?: () => void;
+  onCompleteQuest?: (id: string) => void;
 };
 
-export function MyCaminoView({ profile, campaign, route, activeStage, tracking, engagement }: MyCaminoViewProps) {
+export function MyCaminoView({ profile, journey, campaign, route, activeStage, tracking, engagement, onMap, onCredential, onCompleteQuest }: MyCaminoViewProps) {
   const progression = engagement.progression;
   const classLabel = profile.pilgrimClasses?.length ? profile.pilgrimClasses.join(', ') : profile.pilgrimClass;
   const modeLabel = profile.travelMode === 'bike' ? 'bici' : profile.travelMode === 'car' ? 'coche' : 'a pie';
@@ -42,28 +45,37 @@ export function MyCaminoView({ profile, campaign, route, activeStage, tracking, 
         <View style={styles.statsRow}>
           <StatTile label="Progreso" value={`${tracking.progressPercent}%`} />
           <StatTile label="Restante" value={`${tracking.remainingKm.toFixed(1)} km`} />
-          <StatTile label="Etapas" value={`${campaign.stageSlugs.length}`} />
+          <StatTile label="Etapas" value={`${engagement.stageProgress?.filter((item) => item.state === 'completada').length ?? 0}/${campaign.stageSlugs.length}`} />
         </View>
+        <View style={{ marginTop: 14 }}><Button onPress={() => onMap?.()}>{journey.status === 'completed' ? 'Ver Camino completado' : tracking.session ? 'Continuar mi etapa' : 'Empezar la etapa'}</Button></View>
       </Surface>
 
-      <CredentialCard pilgrimName={profile.displayName} caminoTitle={route?.title ?? campaign.routeSlug} stamps={progression?.unlockedAchievementIds.length ?? 0} onOpen={() => undefined} />
+      <CredentialCard pilgrimName={profile.displayName} caminoTitle={route?.title ?? campaign.routeSlug} stamps={engagement.stageProgress?.filter((item) => item.state === 'completada').length ?? 0} totalStamps={campaign.stageSlugs.length} onOpen={() => onCredential?.()} />
 
       <Surface>
         <Text style={styles.sectionTitle}>Logros recientes</Text>
         <View style={styles.badgeRow}>
           <Badge title="Primera etapa" subtitle="Progreso" locked={!progression?.unlockedAchievementIds.includes('achievement:primera-etapa')} />
-          <Badge title="Compostelano" subtitle="Llegada" locked />
-          <Badge title="Buen companero" subtitle="Reportes" locked />
+          <Badge title="Compostelano" subtitle="Llegada" locked={!progression?.unlockedAchievementIds.includes('achievement:compostela')} />
+          <Badge title="Buen companero" subtitle="Reportes" locked={!progression?.unlockedAchievementIds.includes('achievement:buen-companero')} />
         </View>
       </Surface>
+      {journey.status !== 'completed' ? <View style={{ gap: 12 }}>
+        <Text style={styles.sectionTitle}>La mision de hoy</Text><Text style={styles.cardText}>{engagement.questBoard?.mainQuest.description}</Text>
+        {engagement.questBoard?.sideQuests.slice(0, 3).map((quest) => {
+          const completed = engagement.questStates?.some((item) => item.questTemplateId === quest.id && item.status === 'completed');
+          return <View key={quest.id} style={{ gap: 8, borderTopColor: '#2C4B56', borderTopWidth: 1, paddingTop: 12 }}><Text style={styles.cardText}>{quest.title}</Text><Text style={styles.cardText}>{quest.description}</Text><Button variant="secondary" disabled={completed} onPress={() => onCompleteQuest?.(quest.id)}>{completed ? 'Completada · 50 XP' : 'Confirmar visita · 50 XP'}</Button></View>;
+        })}
+      </View> : <Text style={styles.sectionTitle}>Has completado tu Camino. Tu diario y tus recuerdos ya estan guardados.</Text>}
+      <Text style={styles.cardText}>Presupuesto estimado: {engagement.budget?.estimatedTotalEur ?? '--'} EUR · Gastado: {engagement.budget?.spentTotalEur ?? 0} EUR</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  badgeRow: { flexDirection: 'row', gap: 10 },
+  badgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   cardText: { color: '#A9B7B7', fontSize: 14, lineHeight: 20 },
-  container: { gap: 14 },
+  container: { gap: 18, padding: 18 },
   overline: { color: '#F4B321', fontSize: 12, fontWeight: '900', textTransform: 'uppercase' },
   progressBlock: { gap: 8, marginTop: 12 },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between' },

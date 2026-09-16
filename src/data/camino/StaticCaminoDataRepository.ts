@@ -1,5 +1,8 @@
-import type { Evidence } from '../../core';
-import type { SearchResult, TravelMode } from '../../domain';
+import type { Coordinates, Evidence } from '../../core';
+import { findServicesNear } from '../../domain/camino/nearbyServices';
+import type { SearchResult, StageSections, TravelMode } from '../../domain';
+import { along, length, lineString, nearestPointOnLine, point } from '@turf/turf';
+import { mapRepository } from './mapRepository';
 import type {
   CaminoDataRepository,
   CampaignTemplate,
@@ -39,6 +42,7 @@ const includesText = (value: string | undefined, query: string): boolean => {
 };
 
 export class StaticCaminoDataRepository implements CaminoDataRepository {
+  private readonly sectionCache = new Map<string, StageSections | undefined>();
   async getRoutes() {
     return routesTable.items;
   }
@@ -66,7 +70,34 @@ export class StaticCaminoDataRepository implements CaminoDataRepository {
   }
 
   async getStageSections(stageSlug: string) {
-    return stageSectionsTable.items.find((sections) => sections.stageSlug === stageSlug);
+    const direct = stageSectionsTable.items.find((sections) => sections.stageSlug === stageSlug);
+    if (direct) return direct;
+    if (this.sectionCache.has(stageSlug)) return this.sectionCache.get(stageSlug);
+    const stage = cyclingStagesTable.items.find((item) => item.slug === stageSlug);
+    const geometry = mapRepository.getStageGeometry(stageSlug);
+    if (!stage || !geometry) return undefined;
+    const route = lineString(geometry.coordinates);
+    const matching = stagesTable.items.filter((item) => item.routeSlug === stage.routeSlug).flatMap((item) => {
+      const path = mapRepository.getStageGeometry(item.slug);
+      const sections = stageSectionsTable.items.find((section) => section.stageSlug === item.slug);
+      if (!path || !sections) return [];
+      const line = lineString(path.coordinates);
+      const samples = [point(path.coordinates[0]), along(line, length(line) / 2), point(path.coordinates[path.coordinates.length - 1])];
+      const projected = samples.map((sample) => nearestPointOnLine(route, sample));
+      if (projected.some((sample) => sample.properties.dist > .35)) return [];
+      return [{ sections, order: projected[0].properties.location }];
+    }).sort((left, right) => left.order - right.order);
+    const combined: StageSections | undefined = matching.length ? {
+      stageSlug,
+      sourceStageSlugs: matching.map((item) => item.sections.stageSlug),
+      itinerarySummary: matching.map((item) => item.sections.itinerarySummary).join('\n'),
+      difficultyNotes: matching.flatMap((item) => item.sections.difficultyNotes),
+      observations: matching.flatMap((item) => item.sections.observations),
+      whatToSee: matching.flatMap((item) => item.sections.whatToSee),
+      imageUrls: matching.flatMap((item) => item.sections.imageUrls),
+    } : undefined;
+    this.sectionCache.set(stageSlug, combined);
+    return combined;
   }
 
   async getStagePoints(stageSlug: string) {
@@ -82,12 +113,16 @@ export class StaticCaminoDataRepository implements CaminoDataRepository {
   }
 
   async getServicesByStage(stageSlug: string, types?: Parameters<CaminoDataRepository['getServicesByStage']>[1]) {
-    return servicesTable.items.filter((service) => {
+    return [...servicesTable.items.filter((service) => service.stageSlug === stageSlug), ...mapRepository.getServices(stageSlug)].filter((service) => {
       const matchesStage = service.stageSlug === stageSlug;
       const matchesType = !types || types.includes(service.type);
 
       return matchesStage && matchesType;
     });
+  }
+
+  async getNearbyServices(origin: Coordinates, radiusKm = 20, limitPerCategory = 3) {
+    return findServicesNear([...servicesTable.items, ...mapRepository.getAllServices()], origin, radiusKm, limitPerCategory);
   }
 
   async searchByText(query: string, scope?: SearchScope) {

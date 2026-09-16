@@ -76,10 +76,9 @@ export const campaignTemplatesTable: CaminoDataTable<CampaignTemplateData> = {
         "etapa-de-santiago-de-compostela-a-negreira",
         "etapa-de-negreira-a-olveiroa",
         "etapa-de-olveiroa-a-fisterra",
-        "etapa-de-olveiroa-a-muxia",
         "etapa-de-fisterra-muxia-a-muxia-fisterra"
       ],
-      "recommendedDays": 5
+      "recommendedDays": 4
     },
     {
       "id": "campaign:epica-frances-completo",

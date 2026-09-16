@@ -7,4 +7,5 @@ export type Evidence = {
   sourceId?: string;
   generatedAtIso: string;
   confidence: Confidence;
+  simulated?: boolean;
 };

@@ -1,4 +1,5 @@
 import { StyleSheet, Text, View } from 'react-native';
+import QRCode from 'react-native-qrcode-svg';
 
 import { useAppTheme } from '../theme';
 import { Button } from './Button';
@@ -8,23 +9,24 @@ type CredentialCardProps = {
   caminoTitle: string;
   stamps: number;
   onOpen: () => void;
+  totalStamps?: number;
 };
 
-export function CredentialCard({ pilgrimName, caminoTitle, stamps, onOpen }: CredentialCardProps) {
+export function CredentialCard({ pilgrimName, caminoTitle, stamps, onOpen, totalStamps = 5 }: CredentialCardProps) {
   const theme = useAppTheme();
 
   return (
     <View style={[styles.card, { backgroundColor: theme.colors.surfaceMuted, borderColor: theme.colors.goldDark }]}>
       <View style={styles.header}>
-        <View>
+        <View style={{ flex: 1, paddingRight: 12 }}>
           <Text style={[styles.name, { color: theme.colors.text }]}>{pilgrimName}</Text>
           <Text style={[styles.camino, { color: theme.colors.textMuted }]}>{caminoTitle}</Text>
         </View>
         <View style={[styles.qr, { borderColor: theme.colors.gold }]}>
-          <Text style={[styles.qrText, { color: theme.colors.text }]}>QR</Text>
+          <QRCode value={JSON.stringify({ app: 'Ultreia', pilgrim: pilgrimName, camino: caminoTitle, type: 'local-credential' })} size={52} quietZone={3} />
         </View>
       </View>
-      <Text style={[styles.stamps, { color: theme.colors.textMuted }]}>Sellos: {stamps} / 29</Text>
+      <Text style={[styles.stamps, { color: theme.colors.textMuted }]}>Etapas registradas: {stamps} / {totalStamps}</Text>
       <Button onPress={onOpen}>Ver credencial</Button>
     </View>
   );

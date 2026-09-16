@@ -28,6 +28,8 @@ export const isDirectorAgentOutput = (value: unknown): value is DirectorAgentOut
     && typeof recommendation.priority === 'string'
     && typeof recommendation.title === 'string'
     && typeof recommendation.message === 'string'
+    && (recommendation.deduplicationKey === undefined || (typeof recommendation.deduplicationKey === 'string' && recommendation.deduplicationKey.trim().length > 0 && recommendation.deduplicationKey.length <= 200))
+    && (recommendation.relatedEntityIds === undefined || isStringArray(recommendation.relatedEntityIds))
     && Array.isArray(recommendation.evidence));
 };
 

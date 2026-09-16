@@ -18,6 +18,23 @@ export class DeterministicDecisionEngine {
   evaluate(context: DecisionContext): DecisionOutput {
     const recommendations: DecisionRecommendation[] = [];
 
+    for (const milestone of [25, 50, 75, 100]) {
+      if (!context.activeStage || context.physical.progressPercent < milestone) continue;
+      recommendations.push({
+        id: `milestone:${milestone}`,
+        type: 'tracking',
+        priority: milestone === 100 ? 'alta' : 'media',
+        title: milestone === 100 ? 'Has llegado al final de la etapa' : `${milestone}% del camino de hoy`,
+        message: milestone === 100
+          ? `Ya estas en ${context.activeStage.endTown}. Cierra la etapa para guardar tu diario y recoger tu recompensa.`
+          : `Llevas ${context.physical.completedDistanceKm.toFixed(1)} km. ${milestone === 50 ? 'Buen momento para hacer una pausa y revisar el agua.' : `Quedan ${context.physical.remainingKm.toFixed(1)} km hasta ${context.activeStage.endTown}.`}`,
+        actionLabel: milestone === 100 ? 'Cerrar etapa' : 'Ver progreso',
+        actionType: 'notificar',
+        evidence: [createEvidence(context, `stage-milestone:${milestone}`, 'alta')],
+        createdAtIso: context.timestampIso,
+      });
+    }
+
     if (!context.activeStage) {
       recommendations.push({
         id: createId('tracking', 'sin-etapa'),
@@ -28,20 +45,6 @@ export class DeterministicDecisionEngine {
         actionLabel: 'Revisar campana',
         actionType: 'mostrar',
         evidence: [createEvidence(context, 'missing-active-stage', 'alta')],
-        createdAtIso: context.timestampIso,
-      });
-    }
-
-    if (!context.physical.currentLocation) {
-      recommendations.push({
-        id: createId('tracking', 'registrar-ubicacion'),
-        type: 'tracking',
-        priority: 'media',
-        title: 'Registra tu ubicacion',
-        message: 'Toma una muestra GPS para calcular progreso real y detectar servicios cercanos.',
-        actionLabel: 'Registrar GPS',
-        actionType: 'mostrar',
-        evidence: [createEvidence(context, 'missing-location')],
         createdAtIso: context.timestampIso,
       });
     }
@@ -101,20 +104,6 @@ export class DeterministicDecisionEngine {
         actionLabel: 'Ver detalle',
         actionType: 'crear_quest',
         evidence: [nearest.evidence],
-        createdAtIso: context.timestampIso,
-      });
-    }
-
-    if (context.physical.remainingKm > 10 && !context.physical.etaMinutes && context.physical.currentLocation) {
-      recommendations.push({
-        id: createId('tracking', 'mas-muestras'),
-        type: 'tracking',
-        priority: 'baja',
-        title: 'Mejora el calculo de ETA',
-        message: 'Registra otra muestra en unos minutos para estimar ritmo y hora de llegada.',
-        actionLabel: 'Registrar despues',
-        actionType: 'mostrar',
-        evidence: [createEvidence(context, 'eta-needs-samples')],
         createdAtIso: context.timestampIso,
       });
     }

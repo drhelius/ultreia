@@ -9,6 +9,9 @@ export type TrackingSession = {
   status: TrackingSessionStatus;
   startedAtIso: DateIso;
   endedAtIso?: DateIso;
+  mode?: 'gps' | 'simulation';
+  elapsedSeconds?: number;
+  pausedAtIso?: DateIso;
 };
 
 export type TrackingSample = {
@@ -18,4 +21,5 @@ export type TrackingSample = {
   coordinates: Coordinates;
   accuracyMeters?: number;
   evidence: Evidence;
+  routeProgressKm?: number;
 };

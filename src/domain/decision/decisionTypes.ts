@@ -1,5 +1,5 @@
 import type { Coordinates, DateIso, Evidence } from '../../core';
-import type { CaminoService, CaminoStage, Hostel, Monument, StagePoint, StageSections } from '../camino';
+import type { CaminoService, CaminoStage, Hostel, Monument, ServiceType, StagePoint, StageSections } from '../camino';
 import type { CampaignPlan, ActiveJourney } from '../journey';
 import type { WeatherSnapshot } from '../realtime';
 import type { NearbyEntity } from '../tracking';
@@ -23,6 +23,10 @@ export type DecisionRecommendation = {
   evidence: Evidence[];
   createdAtIso?: DateIso;
   actionType?: 'mostrar' | 'notificar' | 'crear_quest' | 'actualizar_mapa' | 'registrar_diario';
+  origin?: 'local' | 'foundry';
+  stageSlug?: string;
+  deduplicationKey?: string;
+  relatedEntityIds?: string[];
 };
 
 export type DecisionCycle = {
@@ -63,6 +67,42 @@ export type DecisionContext = {
   physical: PhysicalSignals;
   weather?: WeatherSnapshot;
   nearby: NearbyEntity[];
+  simulation?: { enabled: boolean };
+  nearbyPlaces?: Array<{
+    id: string;
+    entityId: string;
+    title: string;
+    type: ServiceType | 'punto';
+    distanceKm: number;
+    distanceKind: 'straight_line';
+    address?: string;
+    phone?: string;
+    openingHoursText?: string;
+    availability: 'unknown';
+    mentionedToday?: boolean;
+    evidence: Evidence[];
+  }>;
+  recommendationHistory?: {
+    localDate: string;
+    timeZone: string;
+    totalShownToday: number;
+    omittedCount: number;
+    deduplicationKeys: string[];
+    items: Array<Pick<DecisionRecommendation, 'id' | 'type' | 'priority' | 'title' | 'message' | 'createdAtIso' | 'stageSlug' | 'deduplicationKey' | 'relatedEntityIds'>>;
+  };
+  stageHighlights?: Array<{
+    id: string;
+    title: string;
+    text: string;
+    scope: 'stage';
+    mentionedToday: boolean;
+    evidence: Evidence[];
+  }>;
+  contentBrief?: {
+    focus: string;
+    newPlaceIds: string[];
+    newHighlightIds: string[];
+  };
 };
 
 export type DecisionOutput = {

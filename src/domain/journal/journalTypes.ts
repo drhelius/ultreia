@@ -1,4 +1,4 @@
-import type { DateIso } from '../../core';
+import type { Coordinates, DateIso, Evidence } from '../../core';
 
 export type JournalEntryStatus = 'draft' | 'saved' | 'discarded';
 
@@ -11,4 +11,8 @@ export type JournalEntry = {
   title: string;
   body: string;
   updatedAtIso: DateIso;
+  kind?: 'journal' | 'incident';
+  incidentType?: string;
+  coordinates?: Coordinates;
+  evidence?: Evidence;
 };

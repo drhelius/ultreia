@@ -14,7 +14,7 @@ export function AssistantChatPanel({ state, onSend, onClear }: AssistantChatPane
 
   const send = () => {
     const trimmed = message.trim();
-    if (!trimmed) return;
+    if (!trimmed || state.sending || state.clearing) return;
     onSend(trimmed);
     setMessage('');
   };
@@ -23,22 +23,23 @@ export function AssistantChatPanel({ state, onSend, onClear }: AssistantChatPane
     <View style={styles.card}>
       <View style={styles.header}>
         <Text style={styles.title}>Asistente Ultreia</Text>
-        <Pressable onPress={onClear}>
-          <Text style={styles.clear}>Limpiar</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel="Limpiar chat" disabled={state.clearing} onPress={() => { setMessage(''); onClear(); }}>
+          <Text style={styles.clear}>{state.clearing ? 'Limpiando...' : 'Limpiar'}</Text>
         </Pressable>
       </View>
       <View style={styles.messages}>
         {state.messages.length === 0 ? <Text style={styles.empty}>Pregunta por servicios cercanos, etapa activa, agua, alojamiento o decisiones del dia.</Text> : null}
-        {state.messages.slice(-6).map((item) => (
+        {state.messages.map((item) => (
           <View key={item.id} style={[styles.message, item.role === 'user' ? styles.userMessage : styles.assistantMessage]}>
             <Text style={styles.messageRole}>{item.role === 'user' ? 'Tu' : 'Ultreia'}</Text>
             <Text style={styles.messageBody}>{item.body}</Text>
           </View>
         ))}
       </View>
+      {state.error ? <Text style={[styles.empty, { color: '#F37968' }]}>{state.error}</Text> : null}
       <View style={styles.inputRow}>
-        <TextInput value={message} onChangeText={setMessage} placeholder="Que necesitas saber?" placeholderTextColor="#6F858C" style={styles.input} />
-        <Pressable style={styles.sendButton} onPress={send} disabled={state.sending}>
+        <TextInput accessibilityLabel="Mensaje al asistente" editable={!state.clearing} value={message} onChangeText={setMessage} placeholder="Que necesitas saber?" placeholderTextColor="#6F858C" style={styles.input} />
+        <Pressable accessibilityRole="button" accessibilityLabel="Enviar mensaje" style={styles.sendButton} onPress={send} disabled={state.sending || state.clearing || !message.trim()}>
           <Text style={styles.sendButtonText}>{state.sending ? '...' : 'Enviar'}</Text>
         </Pressable>
       </View>

@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { AIProjectClient } from '@azure/ai-projects';
 import { ClientSecretCredential } from '@azure/identity';
 import { config as loadEnv } from 'dotenv';
+import { getWeatherSnapshot } from './weather-provider.mjs';
 
 const foundryEnvPath = process.env.ULTREIA_FOUNDRY_ENV_FILE ?? `${process.env.HOME}/.config/ultreia/foundry-gateway.env`;
 loadEnv({ path: foundryEnvPath });
@@ -10,23 +11,23 @@ loadEnv({ path: foundryEnvPath });
 const port = Number(process.env.ULTREIA_GATEWAY_PORT ?? 7071);
 const projectEndpoint = process.env.PROJECT_ENDPOINT;
 
-for (const envName of ['PROJECT_ENDPOINT', 'AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET']) {
-  if (!process.env[envName]) throw new Error(`Falta ${envName} en ${foundryEnvPath}`);
-}
-
 const agentApplications = {
   planning: 'ultreia-planner',
   decision: 'ultreia-director',
   chat: 'ultreia-chat',
 };
 
-const credential = new ClientSecretCredential(
-  process.env.AZURE_TENANT_ID,
-  process.env.AZURE_CLIENT_ID,
-  process.env.AZURE_CLIENT_SECRET,
-);
-const project = new AIProjectClient(projectEndpoint, credential);
-const openAIClient = project.getOpenAIClient();
+let openAIClient;
+const getOpenAIClient = () => {
+  for (const envName of ['PROJECT_ENDPOINT', 'AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET']) {
+    if (!process.env[envName]) throw new Error(`Falta configurar ${envName} en el servidor de IA.`);
+  }
+  if (!openAIClient) {
+    const credential = new ClientSecretCredential(process.env.AZURE_TENANT_ID, process.env.AZURE_CLIENT_ID, process.env.AZURE_CLIENT_SECRET);
+    openAIClient = new AIProjectClient(projectEndpoint, credential).getOpenAIClient();
+  }
+  return openAIClient;
+};
 
 const readBody = async (request) => new Promise((resolve, reject) => {
   const chunks = [];
@@ -70,6 +71,7 @@ const parseAgentJson = (payload) => {
 const invokeAgentApplication = async (agentKind, requestPayload) => {
   const agentName = agentApplications[agentKind];
   if (!agentName) throw new Error(`Agente desconocido: ${agentKind}`);
+  const openAIClient = getOpenAIClient();
 
   const conversation = await openAIClient.conversations.create();
   const response = await openAIClient.responses.create(
@@ -92,6 +94,10 @@ const invokeAgentApplication = async (agentKind, requestPayload) => {
 };
 
 const server = createServer(async (request, response) => {
+  if (request.url === '/health' && request.method === 'GET') {
+    writeJson(response, 200, { ok: true });
+    return;
+  }
   if (request.method === 'OPTIONS') {
     writeJson(response, 204, {});
     return;
@@ -107,12 +113,17 @@ const server = createServer(async (request, response) => {
   try {
     const body = await readBody(request);
     const payload = JSON.parse(body);
+    if (request.url?.split('?')[0] === '/api/realtime/weather') {
+      writeJson(response, 200, await getWeatherSnapshot(payload.coordinates));
+      return;
+    }
     const result = await invokeAgentApplication(route, payload);
     writeJson(response, 200, result);
   } catch (error) {
-    writeJson(response, 500, {
+    const rateLimited = error.status === 429 || error.statusCode === 429;
+    writeJson(response, rateLimited ? 429 : 500, {
       ok: false,
-      errorCode: 'unknown',
+      errorCode: rateLimited ? 'rate_limited' : 'unknown',
       message: error instanceof Error ? error.message : 'Error desconocido en AiGateway dev.',
     });
   }

@@ -47,6 +47,7 @@ export type CaminoStage = {
   startTown: string;
   endTown: string;
   distanceKm: number;
+  viaTowns?: string[];
   estimatedMinutes: number;
   difficulty: Difficulty;
   summary: string;
@@ -97,6 +98,7 @@ export type StagePoint = {
 
 export type StageSections = {
   stageSlug: string;
+  sourceStageSlugs?: string[];
   itinerarySummary: string;
   difficultyNotes: string[];
   observations: string[];

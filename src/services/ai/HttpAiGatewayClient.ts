@@ -28,13 +28,14 @@ export class HttpAiGatewayClient implements AiGatewayClient {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(request),
+      signal: AbortSignal.timeout(90000),
     });
 
     if (!response.ok) {
       return {
         ok: false,
         errorCode: response.status === 401 || response.status === 403 ? 'unauthorized' : response.status === 429 ? 'rate_limited' : 'unknown',
-        message: `Gateway IA respondio HTTP ${response.status}.`,
+        message: response.status === 429 ? 'La IA ha alcanzado su cuota temporal. Se reintentara respetando la espera minima.' : `Gateway IA respondio HTTP ${response.status}.`,
       };
     }
 

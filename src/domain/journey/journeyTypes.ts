@@ -28,5 +28,6 @@ export type StageProgress = {
   stageSlug: string;
   state: 'bloqueada' | 'futura' | 'activa' | 'en_pausa' | 'completada' | 'saltada' | 'replanificada';
   completedAtIso?: DateIso;
+  distanceKm?: number;
   evidence?: Evidence;
 };

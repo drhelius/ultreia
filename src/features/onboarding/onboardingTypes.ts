@@ -19,4 +19,4 @@ export type OnboardingDraft = {
   avoidCrowds: boolean;
 };
 
-export type OnboardingStep = 'profile' | 'mode' | 'classes' | 'availability' | 'goal' | 'budget' | 'preferences' | 'planning' | 'recommendations';
+export type OnboardingStep = 'profile' | 'mode' | 'classes' | 'availability' | 'goal' | 'budget' | 'planning' | 'recommendations';

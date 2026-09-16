@@ -125,7 +125,8 @@ class MemoryChatRepository implements ChatRepository {
   async clearThread(threadId: string) { this.messages.set(threadId, []); }
 }
 
-export const createMemoryRepositories = () => ({
+export const createMemoryRepositories = (storage?: Pick<Storage, 'getItem' | 'setItem'>) => {
+  const repositories = {
   userProfileRepository: new MemoryUserProfileRepository(),
   journeyRepository: new MemoryJourneyRepository(),
   trackingRepository: new MemoryTrackingRepository(),
@@ -134,6 +135,31 @@ export const createMemoryRepositories = () => ({
   expenseRepository: new MemoryExpenseRepository(),
   progressionRepository: new MemoryProgressionRepository(),
   chatRepository: new MemoryChatRepository(),
-});
+  };
+  if (storage) {
+    const key = 'ultreia:local-state:v1';
+    const raw = storage.getItem(key);
+    if (raw) {
+      const snapshot = JSON.parse(raw, (_name, value) => value && Array.isArray(value.__map__) ? new Map(value.__map__) : value);
+      for (const [name, repository] of Object.entries(repositories)) {
+        if (snapshot[name]) Object.assign(repository, snapshot[name]);
+      }
+    }
+    const save = () => storage.setItem(key, JSON.stringify(repositories, (_name, value) => value instanceof Map ? { __map__: [...value.entries()] } : value));
+    for (const repository of Object.values(repositories)) {
+      for (const name of Object.getOwnPropertyNames(Object.getPrototypeOf(repository))) {
+        if (!/^(save|add|complete|clear|delete|mark|getOrCreate)/.test(name)) continue;
+        const target = repository as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
+        const original = target[name].bind(repository);
+        Object.defineProperty(repository, name, { enumerable: false, value: async (...args: unknown[]) => {
+          const result = await original(...args);
+          save();
+          return result;
+        } });
+      }
+    }
+  }
+  return repositories;
+};
 
 export type MemoryRepositories = ReturnType<typeof createMemoryRepositories>;

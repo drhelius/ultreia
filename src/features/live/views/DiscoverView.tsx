@@ -1,51 +1,61 @@
 import { useEffect, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, Text, TextInput, View } from 'react-native';
+import { BedDouble, Droplets, Cross, Utensils, Landmark, MapPin, ChevronRight } from 'lucide-react-native';
 
 import { staticCaminoDataRepository } from '../../../data/camino';
 import type { CaminoService } from '../../../domain';
-import { Chip, ServiceListItem, Surface } from '../../../ui/components';
+import { Button, Chip } from '../../../ui/components';
+import type { Coordinates } from '../../../core';
+import { distanceKmBetween } from '../../../domain';
+import { liveStyles as styles, liveColors as colors } from '../liveStyles';
 
-type DiscoverViewProps = { stageSlug?: string };
+type DiscoverViewProps = { stageSlug?: string; position?: Coordinates; onSelectService?: (service: CaminoService) => void };
 
-export function DiscoverView({ stageSlug }: DiscoverViewProps) {
-  const [filter, setFilter] = useState<'todos' | CaminoService['type']>('todos');
+export function DiscoverView({ stageSlug, position, onSelectService }: DiscoverViewProps) {
+  const [filter, setFilter] = useState('todos');
   const [services, setServices] = useState<CaminoService[]>([]);
+  const [query, setQuery] = useState('');
+  const [limit, setLimit] = useState(30);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string>();
 
   useEffect(() => {
     let mounted = true;
     const load = async () => {
-      if (!stageSlug) return;
-      const nextServices = await staticCaminoDataRepository.getServicesByStage(stageSlug);
-      if (mounted) setServices(nextServices);
+      setServices([]); setLimit(30); setLoading(true); setError(undefined);
+      try {
+        const nextServices = stageSlug ? await staticCaminoDataRepository.getServicesByStage(stageSlug) : [];
+        if (mounted) setServices(nextServices);
+      } catch { if (mounted) setError('No se pudieron cargar los servicios.'); }
+      finally { if (mounted) setLoading(false); }
     };
     void load();
     return () => { mounted = false; };
   }, [stageSlug]);
 
-  const visible = filter === 'todos' ? services : services.filter((service) => service.type === filter);
+  const groups: Record<string, string[]> = { dormir: ['albergue'], agua: ['fuente'], salud: ['farmacia', 'centro_salud'], comida: ['restaurante', 'bar', 'supermercado'], cultura: ['monumento'], servicios: ['cajero', 'taller_bici', 'oficina_turismo', 'transporte'] };
+  const normalize = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const visible = services.filter((service) => (filter === 'todos' || groups[filter]?.includes(service.type)) && normalize(service.title).includes(normalize(query))).map((service) => ({ service, distance: position && service.coordinate ? distanceKmBetween(position, service.coordinate) : undefined })).sort((left, right) => (left.distance ?? Infinity) - (right.distance ?? Infinity));
 
   return (
-    <Surface>
-      <Text style={styles.title}>Descubrir</Text>
-      <View style={styles.filters}>
-        <Chip label="Todos" active={filter === 'todos'} onPress={() => setFilter('todos')} />
-        <Chip label="Albergues" active={filter === 'albergue'} onPress={() => setFilter('albergue')} />
-        <Chip label="Patrimonio" active={filter === 'monumento'} onPress={() => setFilter('monumento')} />
-        <Chip label="Salud" active={filter === 'farmacia'} onPress={() => setFilter('farmacia')} />
+    <View style={styles.section}>
+      <TextInput accessibilityLabel="Buscar servicios" placeholder="Buscar en esta etapa" placeholderTextColor={colors.muted} value={query} onChangeText={(value) => { setQuery(value); setLimit(30); }} style={styles.input} />
+      <View style={styles.row}>
+        {['todos', ...Object.keys(groups)].map((id) => <Chip key={id} label={{ todos: 'Todo', dormir: 'Dormir', agua: 'Agua', salud: 'Salud', comida: 'Comida', cultura: 'Cultura', servicios: 'Servicios' }[id]!} active={filter === id} onPress={() => { setFilter(id); setLimit(30); }} />)}
       </View>
-      <View style={styles.list}>
-        {visible.length === 0 ? <Text style={styles.empty}>No hay servicios de este tipo para la etapa activa.</Text> : null}
-        {visible.slice(0, 20).map((service) => (
-          <ServiceListItem key={service.id} title={service.title} type={service.type} meta={`${service.type}${service.coordinateStatus === 'verified' ? ' · coordenada verificada' : ''}`} />
-        ))}
-      </View>
-    </Surface>
+      <Text style={styles.muted}>{loading ? 'Cargando servicios...' : `${visible.length} lugares en esta etapa`}</Text>
+      {error ? <Text style={styles.error}>{error}</Text> : null}
+      {!loading && visible.length === 0 ? <Text style={styles.text}>No hay lugares que coincidan con esta busqueda.</Text> : null}
+      {visible.slice(0, limit).map(({ service, distance }) => {
+        const Icon = service.type === 'albergue' ? BedDouble : service.type === 'fuente' ? Droplets : ['farmacia', 'centro_salud'].includes(service.type) ? Cross : service.type === 'monumento' ? Landmark : ['bar', 'restaurante'].includes(service.type) ? Utensils : MapPin;
+        const color = service.type === 'fuente' ? '#4BA6E4' : ['farmacia', 'centro_salud'].includes(service.type) ? colors.green : service.type === 'monumento' ? colors.gold : '#C3A0DF';
+        return <Pressable key={service.id} accessibilityRole="button" accessibilityLabel={`Ver ${service.title}`} onPress={() => onSelectService?.(service)} style={[styles.item, { flexDirection: 'row', alignItems: 'center', gap: 14 }]}>
+          <View style={[styles.icon, { borderRadius: 22 }]}><Icon color={color} size={22} /></View>
+          <View style={{ flex: 1, gap: 4 }}><Text style={styles.text}>{service.title}</Text><Text style={styles.muted}>{service.type.replaceAll('_', ' ')}{distance !== undefined ? ` · ${distance.toFixed(1)} km en linea recta` : ''}</Text><Text style={styles.muted}>{service.openingHoursText ? 'Horario registrado' : 'Sin horario confirmado'}</Text></View><ChevronRight size={18} color={colors.muted} />
+        </Pressable>;
+      })}
+      {visible.length > limit ? <Button variant="secondary" onPress={() => setLimit(limit + 30)}>Ver mas lugares</Button> : null}
+      <Text style={styles.muted}>Catalogo local y OpenStreetMap. Horarios y disponibilidad sujetos a confirmacion.</Text>
+    </View>
   );
 }
-
-const styles = StyleSheet.create({
-  empty: { color: '#A9B7B7', fontSize: 14, lineHeight: 20 },
-  filters: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
-  list: { gap: 12 },
-  title: { color: '#F4B321', fontSize: 22, fontWeight: '900', marginBottom: 12 },
-});
